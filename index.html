@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Calculadora de insumos - Panadería</title>
+  <style>
+    body{font-family:Inter,system-ui,Segoe UI,Roboto,Arial;background:#f7f7fb;color:#111;margin:0;padding:24px}
+    .container{max-width:980px;margin:0 auto;background:#fff;padding:20px;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.06)}
+    h1{margin:0 0 12px;font-size:22px}
+    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+    label{font-size:14px}
+    select,input,button,textarea{font-size:14px;padding:8px;border:1px solid #ddd;border-radius:8px}
+    button{cursor:pointer;background:#2563eb;color:#fff;border:none}
+    .recipes, .results{margin-top:18px}
+    table{width:100%;border-collapse:collapse;margin-top:10px}
+    th,td{padding:8px;border-bottom:1px solid #eee;text-align:left}
+    .muted{color:#666;font-size:13px}
+    textarea{min-height:80px}
+    .footer{margin-top:18px;color:#666;font-size:13px}
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <h1>Calculadora de insumos - Panadería</h1>
+    <p class="muted">Selecciona recetas y cantidades. Se mostrarán los insumos totales por receta y un total general al final.</p>
+
+    <div class="recipes">
+      <div class="row">
+        <label for="recipeSelect">Receta:</label>
+        <select id="recipeSelect"></select>
+
+        <label for="qty">Cantidad de lotes:</label>
+        <input id="qty" type="number" min="1" value="1" style="width:80px">
+
+        <button id="addRecipeBtn">Añadir a cálculo</button>
+        <button id="calcBtn">Calcular todo</button>
+        <button id="saveDayBtn">Guardar consumo diario</button>
+        <button id="weeklyBtn">Ver consumo semanal</button>
+        <button id="clearWeeklyBtn">Limpiar consumo semanal</button>
+        <button id="exportBtn">Exportar a Excel</button>
+        <button id="exportWeeklyBtn">Exportar resumen semanal</button>
+        
+      </div>
+    </div>
+
+    <div class="results" id="results"></div>
+
+    <div class="footer">Ejemplos incluidos: "Batido de pan", "Pan de chocolate" y "Pan de mantequilla".</div>
+  </div>
+
+<script>
+// --- utilidades ---
+const toBase = (amt, unit) => {
+  unit = unit.toLowerCase();
+  if (unit === 'kg') return amt * 1000;
+  if (unit === 'g') return amt;
+  if (unit === 'l') return amt * 1000;
+  if (unit === 'ml') return amt;
+  return amt;
+}
+const fromBase = (amt, kind) => {
+  if (kind === 'solid') {
+    if (Math.abs(amt) >= 1000) return {value: (amt/1000).toFixed(3).replace(/\.0+$/,'') , unit:'kg'};
+    return {value: (amt).toFixed(0), unit:'g'};
+  } else {
+    if (Math.abs(amt) >= 1000) return {value: (amt/1000).toFixed(3).replace(/\.0+$/,'') , unit:'l'};
+    return {value: (amt).toFixed(0), unit:'ml'};
+  }
+}
+
+const isLiquidName = name => {
+  const liquids = ['leche','agua','aceite','huevo','yema','clara','crema'];
+  name = name.toLowerCase();
+  return liquids.some(w => name.includes(w));
+}
+
+const defaultRecipes = [
+  {
+    id: 'batido-pan',
+    name: 'Batido de pan',
+    ingredients: [
+      {name:'Harina', amount:3, unit:'kg'},
+      {name:'Azucar', amount:2.7, unit:'kg'},
+      {name:'Polvo para hornear', amount:70, unit:'g'},
+      {name:'Leche', amount:1, unit:'l'},
+    ]
+  },
+  {
+    id: 'pan-chocolate',
+    name: 'Pan de chocolate',
+    ingredients: [
+      {name:'Harina', amount:3.1, unit:'kg'},
+      {name:'Azucar', amount:2.7, unit:'kg'},
+      {name:'Carbonato', amount:60, unit:'g'},
+      {name:'Chocolate Carat', amount:1.65, unit:'kg'},
+      {name:'Café', amount:70, unit:'g'},
+      {name:'Leche', amount:3, unit:'l'},
+    ]
+  },
+  {
+    id: 'pan-mantequilla',
+    name: 'Pan de mantequilla',
+    ingredients: [
+      {name:'Harina', amount:3.6, unit:'kg'},
+      {name:'Polvo para hornear', amount:110, unit:'g'},
+      {name:'Nuez', amount:250, unit:'g'},
+      {name:'Azúcar-refinada', amount:2.45, unit:'kg'},
+      {name:'Mantequilla', amount:2.16, unit:'kg'},
+      {name:'Leche', amount:3.6, unit:'l'},
+    ]
+  },
+  {
+    id: 'Red-velvet',
+    name: 'Red velvet',
+      ingredients: [
+        {name:'Harina de red velvet', amount:5, unit:'kg'},
+        {name:'Agua', amount:1.7, unit:'l'},
+        {name:'Aceite', amount:300, unit:'ml'},
+      ]
+  },
+  {
+    id: 'Chocoqueso',
+    name: 'ChocoQueso',
+    ingredients: [
+      {name:'Lechera de bolsa', amount:2, unit:'l'},
+      {name:'clavel', amount:9, unit:'l'},
+      {name:'Queso doble crema', amount:5, unit:'kg'},
+    ]
+  },
+  {
+    id: 'Flan-aromaCafe',
+    name: 'flan de aroma de cafe',
+      ingredients: [
+        {name:'Harina de red velvet', amount:5, unit:'kg'},
+        {name:'Leche', amount:1, unit:'l'},
+        {name:'Clavel', amount:1, unit:'l'},
+        {name:'Lechera de bote', amount:1, unit:'l'},
+        {name:'Vanilla', amount:50, unit:'ml'},
+      ]
+  },
+    {
+    id: 'Cottage',
+    name: 'Quesillo de Cottage',
+      ingredients: [
+        {name:'Queso Cottage', amount:1, unit:'kg'},
+        {name:'Lechera de bolsa', amount:750, unit:'ml'},
+        {name:'Lechera de bote', amount:750, unit:'ml'},
+        {name:'Crema', amount:1, unit:'l'},
+        {name:'Vanilla', amount:65, unit:'ml'},
+      ]
+  },
+  {
+    id: 'Quesillo',
+    name: 'Quesillo',
+      ingredients: [
+        {name:'Queso', amount:1, unit:'kg'},
+        {name:'Azucar', amount:220, unit:'g'},
+        {name:'Maizena', amount:53, unit:'g'},
+        {name:'Crema', amount:500, unit:'ml'},
+      ]
+  },
+  {
+    id: 'Flan-Napolitano',
+    name: 'Flan Napolitano',
+      ingredients: [
+        {name:'Lechera de bolsa', amount:300, unit:'ml'},
+        {name:'Lechera de bote', amount:100, unit:'ml'},
+        {name:'Clavel', amount:400, unit:'ml'},
+        {name:'Crema', amount:250, unit:'ml'},
+        {name:'Queso', amount:150, unit:'g'},
+        {name:'Vanilla', amount:15, unit:'ml'},
+      ]
+  },
+    {
+    id: 'Flan-Mouse-Fresa',
+    name: 'Flan de mouse de fresa',
+      ingredients: [
+        {name:'Lechera de bote', amount:1, unit:'l'},
+        {name:'Clavel', amount:1, unit:'l'},
+        {name:'Crema', amount:1, unit:'l'},
+        {name:'Queso', amount:370, unit:'g'},
+      ]
+  },
+
+
+
+];
+
+let recipes = defaultRecipes;
+
+// DOM
+const recipeSelect = document.getElementById('recipeSelect');
+const qtyInput = document.getElementById('qty');
+const resultsDiv = document.getElementById('results');
+const addRecipeBtn = document.getElementById('addRecipeBtn');
+const calcBtn = document.getElementById('calcBtn');
+const exportBtn = document.getElementById('exportBtn');
+const saveDayBtn = document.getElementById('saveDayBtn');
+const weeklyBtn = document.getElementById('weeklyBtn');
+const exportWeeklyBtn = document.getElementById('exportWeeklyBtn');
+
+let selectedList = [];
+
+function refreshRecipeSelect(){
+  recipeSelect.innerHTML = '';
+  recipes.forEach(r => {
+    const opt = document.createElement('option'); opt.value = r.id; opt.textContent = r.name; recipeSelect.appendChild(opt);
+  });
+}
+
+addRecipeBtn.addEventListener('click', ()=>{
+  const r = recipes.find(x=>x.id===recipeSelect.value); if(!r) return;
+  const qty = Number(qtyInput.value)||1;
+  selectedList.push({recipe:r, qty});
+  alert(`Añadido: ${r.name} x ${qty}`);
+});
+
+function calculateAll(){
+  resultsDiv.innerHTML = '';
+  if(selectedList.length===0){ resultsDiv.textContent='No se añadieron recetas.'; return; }
+
+  let grandTotals = {};
+
+  selectedList.forEach((sel,idx)=>{
+    const {recipe, qty} = sel;
+    let totals = {};
+    recipe.ingredients.forEach(i=>{
+      const key = i.name.toLowerCase();
+      const kind = isLiquidName(i.name)?'liquid':'solid';
+      const base = toBase(i.amount, i.unit) * qty;
+      if(!totals[key]) totals[key] = {name:i.name, amount:0, kind};
+      totals[key].amount += base;
+      if(!grandTotals[key]) grandTotals[key] = {name:i.name, amount:0, kind};
+      grandTotals[key].amount += base;
+    });
+
+    const div = document.createElement('div');
+    div.innerHTML = `<h3>${recipe.name} x ${qty}</h3>`;
+    const table = document.createElement('table');
+    table.innerHTML = '<thead><tr><th>Ingrediente</th><th>Total</th></tr></thead>';
+    const tbody = document.createElement('tbody');
+    Object.values(totals).forEach(t=>{
+      const disp = fromBase(t.amount, t.kind);
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${t.name}</td><td>${disp.value} ${disp.unit}</td>`;
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody); div.appendChild(table);
+    resultsDiv.appendChild(div);
+  });
+
+  const totalDiv = document.createElement('div');
+  totalDiv.innerHTML = '<h2>Total general</h2>';
+  const table = document.createElement('table');
+  table.innerHTML = '<thead><tr><th>Ingrediente</th><th>Total</th></tr></thead>';
+  const tbody = document.createElement('tbody');
+  Object.values(grandTotals).forEach(t=>{
+    const disp = fromBase(t.amount, t.kind);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${t.name}</td><td>${disp.value} ${disp.unit}</td>`;
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody); totalDiv.appendChild(table);
+  resultsDiv.appendChild(totalDiv);
+}
+
+calcBtn.addEventListener('click', calculateAll);
+
+// --- localStorage ---
+saveDayBtn.addEventListener('click', ()=>{
+  if(selectedList.length===0){ alert("No hay resultados para guardar."); return; }
+
+  let grandTotals = {};
+  selectedList.forEach(sel=>{
+    sel.recipe.ingredients.forEach(i=>{
+      const key = i.name.toLowerCase();
+      const kind = isLiquidName(i.name)?'liquid':'solid';
+      const base = toBase(i.amount, i.unit) * sel.qty;
+      if(!grandTotals[key]) grandTotals[key] = {name:i.name, amount:0, kind};
+      grandTotals[key].amount += base;
+    });
+  });
+
+  let consumos = JSON.parse(localStorage.getItem("consumosSemana")) || [];
+  consumos.push({
+    fecha: new Date().toLocaleDateString(),
+    totales: grandTotals
+  });
+
+  localStorage.setItem("consumosSemana", JSON.stringify(consumos));
+  alert("Consumo diario guardado ✅");
+});
+
+// --- Ver resumen semanal ---
+weeklyBtn.addEventListener('click', ()=>{
+  let consumos = JSON.parse(localStorage.getItem("consumosSemana")) || [];
+  if(consumos.length===0){ alert("No hay consumos guardados."); return; }
+
+  let resumen = {};
+  consumos.forEach(dia=>{
+    for(let key in dia.totales){
+      if(!resumen[key]) resumen[key] = {name: dia.totales[key].name, amount:0, kind: dia.totales[key].kind};
+      resumen[key].amount += dia.totales[key].amount;
+    }
+  });
+
+  resultsDiv.innerHTML = "<h2>Consumo semanal</h2>";
+  const table = document.createElement("table");
+  table.innerHTML = "<thead><tr><th>Ingrediente</th><th>Total semanal</th></tr></thead>";
+  const tbody = document.createElement("tbody");
+
+  Object.values(resumen).forEach(t=>{
+    const disp = fromBase(t.amount, t.kind);
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${t.name}</td><td>${disp.value} ${disp.unit}</td>`;
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(tbody);
+  resultsDiv.appendChild(table);
+});
+
+// --- Exportar resumen semanal a Excel ---
+exportWeeklyBtn.addEventListener('click', ()=>{
+  let consumos = JSON.parse(localStorage.getItem("consumosSemana")) || [];
+  if(consumos.length===0){ alert("No hay consumos guardados."); return; }
+
+  let resumen = {};
+  consumos.forEach(dia=>{
+    for(let key in dia.totales){
+      if(!resumen[key]) resumen[key] = {name: dia.totales[key].name, amount:0, kind: dia.totales[key].kind};
+      resumen[key].amount += dia.totales[key].amount;
+    }
+  });
+
+  let data = [["Ingrediente","Total semanal"]];
+  Object.values(resumen).forEach(t=>{
+    const disp = fromBase(t.amount, t.kind);
+    data.push([t.name, disp.value+" "+disp.unit]);
+  });
+
+  let wb = XLSX.utils.book_new();
+  let ws = XLSX.utils.aoa_to_sheet(data);
+  XLSX.utils.book_append_sheet(wb, ws, "Resumen Semanal");
+
+  XLSX.writeFile(wb, "resumen_semanal.xlsx");
+});
+
+// Exportar cálculo actual a Excel
+exportBtn.addEventListener('click', ()=>{
+  if(selectedList.length===0){ alert('No hay resultados para exportar.'); return; }
+
+  let wb = XLSX.utils.book_new();
+
+  selectedList.forEach(sel=>{
+    const {recipe, qty} = sel;
+    let data = [["Ingrediente","Total"]];
+    recipe.ingredients.forEach(i=>{
+      const kind = isLiquidName(i.name)?'liquid':'solid';
+      const base = toBase(i.amount, i.unit) * qty;
+      const disp = fromBase(base, kind);
+      data.push([i.name, disp.value+" "+disp.unit]);
+    });
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    XLSX.utils.book_append_sheet(wb, ws, recipe.name.substring(0,30));
+  });
+
+  let grandTotals = {};
+  selectedList.forEach(sel=>{
+    sel.recipe.ingredients.forEach(i=>{
+      const key = i.name.toLowerCase();
+      const kind = isLiquidName(i.name)?'liquid':'solid';
+      const base = toBase(i.amount, i.unit) * sel.qty;
+      if(!grandTotals[key]) grandTotals[key] = {name:i.name, amount:0, kind};
+      grandTotals[key].amount += base;
+    });
+  });
+
+  let totalData = [["Ingrediente","Total"]];
+  Object.values(grandTotals).forEach(t=>{
+    const disp = fromBase(t.amount, t.kind);
+    totalData.push([t.name, disp.value+" "+disp.unit]);
+  });
+  const wsTotal = XLSX.utils.aoa_to_sheet(totalData);
+  XLSX.utils.book_append_sheet(wb, wsTotal, "Total General");
+
+  XLSX.writeFile(wb, "insumos_panaderia.xlsx");
+});
+
+(function init(){
+  refreshRecipeSelect();
+})();
+
+const clearWeeklyBtn = document.getElementById('clearWeeklyBtn');
+
+// --- Limpiar consumo semanal ---
+clearWeeklyBtn.addEventListener('click', ()=>{
+  localStorage.removeItem("consumosSemana");
+  alert("Consumos semanales borrados ✅");
+  resultsDiv.innerHTML = '';
+});
+
+// --- Ver resumen semanal  ---
+weeklyBtn.addEventListener('click', ()=>{
+  let consumos = JSON.parse(localStorage.getItem("consumosSemana")) || [];
+  if(consumos.length===0){ alert("No hay consumos guardados."); return; }
+
+  // Calcular rango de semana (del primer día al último guardado)
+  let fechas = consumos.map(c=> new Date(c.fecha));
+  fechas.sort((a,b)=>a-b);
+  let inicio = fechas[0];
+  let fin = fechas[fechas.length-1];
+
+  const opciones = { day:'numeric', month:'long', year:'numeric' };
+  let rango = `Semana del ${inicio.toLocaleDateString('es-ES', opciones)} al ${fin.toLocaleDateString('es-ES', opciones)}`;
+
+  // Calcular resumen semanal
+  let resumen = {};
+  consumos.forEach(dia=>{
+    for(let key in dia.totales){
+      if(!resumen[key]) resumen[key] = {name: dia.totales[key].name, amount:0, kind: dia.totales[key].kind};
+      resumen[key].amount += dia.totales[key].amount;
+    }
+  });
+
+  // Mostrar resultados
+  resultsDiv.innerHTML = `<h2>Consumo semanal</h2><p><strong>${rango}</strong></p>`;
+
+  // Tabla de consumos por día
+  const tablaDias = document.createElement("table");
+  tablaDias.innerHTML = "<thead><tr><th>Fecha</th><th>Ingredientes</th></tr></thead>";
+  const tbodyDias = document.createElement("tbody");
+
+  consumos.forEach(dia=>{
+    let detalles = Object.values(dia.totales).map(t=>{
+      const disp = fromBase(t.amount, t.kind);
+      return `${t.name}: ${disp.value} ${disp.unit}`;
+    }).join(", ");
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${dia.fecha}</td><td>${detalles}</td>`;
+    tbodyDias.appendChild(tr);
+  });
+
+  tablaDias.appendChild(tbodyDias);
+  resultsDiv.appendChild(tablaDias);
+
+  // Tabla de totales semanales
+  const tablaResumen = document.createElement("table");
+  tablaResumen.innerHTML = "<thead><tr><th>Ingrediente</th><th>Total semanal</th></tr></thead>";
+  const tbody = document.createElement("tbody");
+
+  Object.values(resumen).forEach(t=>{
+    const disp = fromBase(t.amount, t.kind);
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${t.name}</td><td>${disp.value} ${disp.unit}</td>`;
+    tbody.appendChild(tr);
+  });
+
+  tablaResumen.appendChild(tbody);
+  resultsDiv.appendChild(tablaResumen);
+});
+
+</script>
+</body>
+</html>
